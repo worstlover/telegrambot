@@ -239,3 +239,136 @@ async def reject_media_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     
     # This could be used for manual rejection commands
     await update.message.reply_text("❌ برای رد رسانه از دکمه‌های inline استفاده کنید.")
+
+async def admin_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle admin callback queries (approve/reject buttons)"""
+    if not update.callback_query:
+        return
+        
+    query = update.callback_query
+    
+    # Check if user is admin
+    if not is_admin(query.from_user.id):
+        await query.answer("❌ شما مجاز به انجام این عمل نیستید.")
+        return
+    
+    # Handle approval
+    if query.data.startswith("approve_"):
+        await handle_media_approval(query, context)
+    elif query.data.startswith("reject_"):
+        await handle_media_rejection(query, context)
+    else:
+        await query.answer("❌ عملیات نامشخص.")
+
+async def handle_media_approval(query, context):
+    """Handle media approval"""
+    try:
+        media_id = query.data.split("_")[1]
+        
+        # Get media info from database
+        from bot.database import get_connection
+        conn = get_connection()
+        if not conn:
+            await query.answer("❌ خطا در دسترسی به پایگاه داده.")
+            return
+            
+        media_info = conn.execute('''
+            SELECT user_id, media_type, file_id, caption, message_id 
+            FROM pending_media WHERE id = ?
+        ''', (int(media_id),)).fetchone()
+        
+        if not media_info:
+            await query.answer("❌ رسانه یافت نشد.")
+            return
+        
+        # Post to channel
+        from bot.config import CHANNEL_ID, CHANNEL_FOOTER
+        from bot.database import get_user_display_name
+        
+        display_name = get_user_display_name(media_info['user_id'])
+        caption = media_info['caption'] or ""
+        full_caption = f"{caption}\n\n{CHANNEL_FOOTER.format(display_name)}"
+        
+        # Send based on media type
+        if media_info['media_type'] == 'photo':
+            await context.bot.send_photo(
+                chat_id=CHANNEL_ID,
+                photo=media_info['file_id'],
+                caption=full_caption
+            )
+        elif media_info['media_type'] == 'video':
+            await context.bot.send_video(
+                chat_id=CHANNEL_ID,
+                video=media_info['file_id'],
+                caption=full_caption
+            )
+        elif media_info['media_type'] == 'document':
+            await context.bot.send_document(
+                chat_id=CHANNEL_ID,
+                document=media_info['file_id'],
+                caption=full_caption
+            )
+        
+        # Remove from pending
+        conn.execute('DELETE FROM pending_media WHERE id = ?', (int(media_id),))
+        conn.commit()
+        
+        # Notify user
+        await context.bot.send_message(
+            chat_id=media_info['user_id'],
+            text="✅ رسانه شما تأیید و در کانال منتشر شد!"
+        )
+        
+        # Update admin message
+        await query.edit_message_text(
+            text="✅ رسانه تأیید و منتشر شد.",
+            reply_markup=None
+        )
+        
+        await query.answer("✅ رسانه تأیید شد.")
+        
+    except Exception as e:
+        logger.error(f"Error approving media: {e}")
+        await query.answer("❌ خطا در تأیید رسانه.")
+
+async def handle_media_rejection(query, context):
+    """Handle media rejection"""
+    try:
+        media_id = query.data.split("_")[1]
+        
+        # Get media info from database
+        from bot.database import get_connection
+        conn = get_connection()
+        if not conn:
+            await query.answer("❌ خطا در دسترسی به پایگاه داده.")
+            return
+            
+        media_info = conn.execute('''
+            SELECT user_id FROM pending_media WHERE id = ?
+        ''', (int(media_id),)).fetchone()
+        
+        if not media_info:
+            await query.answer("❌ رسانه یافت نشد.")
+            return
+        
+        # Remove from pending
+        conn.execute('DELETE FROM pending_media WHERE id = ?', (int(media_id),))
+        conn.commit()
+        
+        # Notify user
+        await context.bot.send_message(
+            chat_id=media_info['user_id'],
+            text="❌ رسانه شما رد شد. لطفاً محتوای مناسب‌تری ارسال کنید."
+        )
+        
+        # Update admin message
+        await query.edit_message_text(
+            text="❌ رسانه رد شد.",
+            reply_markup=None
+        )
+        
+        await query.answer("❌ رسانه رد شد.")
+        
+    except Exception as e:
+        logger.error(f"Error rejecting media: {e}")
+        await query.answer("❌ خطا در رد رسانه.")

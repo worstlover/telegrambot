@@ -6,19 +6,13 @@ Main entry point for the bot application
 
 import os
 import logging
+import asyncio
+import threading
+import time
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 
-from bot.handlers import (
-    start_handler, message_handler, set_display_name_handler, 
-    help_handler, button_callback_handler
-)
-from bot.admin_handlers import (
-    admin_panel_handler, approve_media_handler, reject_media_handler,
-    add_admin_handler, remove_admin_handler, add_profanity_handler,
-    remove_profanity_handler, toggle_approval_handler, set_rate_limit_handler,
-    set_activity_hours_handler, list_settings_handler, list_admins_handler,
-    list_profanity_handler
-)
+from bot.handlers import start_handler, message_handler
+from bot.admin_handlers import admin_callback_handler
 from bot.database import init_database
 
 # Configure logging
@@ -27,6 +21,12 @@ logging.basicConfig(
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+def keep_alive():
+    """Keep the program alive by periodically logging status"""
+    while True:
+        time.sleep(300)  # Every 5 minutes
+        logger.info("Bot is running and active")
 
 def main():
     """Start the bot"""
@@ -39,31 +39,19 @@ def main():
     # Initialize database
     init_database()
     
+    # Start keep-alive thread
+    keep_alive_thread = threading.Thread(target=keep_alive, daemon=True)
+    keep_alive_thread.start()
+    
     # Create application
     application = Application.builder().token(bot_token).build()
     
     # Add handlers
     # Command handlers
     application.add_handler(CommandHandler("start", start_handler))
-    application.add_handler(CommandHandler("help", help_handler))
-    application.add_handler(CommandHandler("setname", set_display_name_handler))
     
-    # Admin command handlers
-    application.add_handler(CommandHandler("admin", admin_panel_handler))
-    application.add_handler(CommandHandler("addadmin", add_admin_handler))
-    application.add_handler(CommandHandler("removeadmin", remove_admin_handler))
-    application.add_handler(CommandHandler("addprofanity", add_profanity_handler))
-    application.add_handler(CommandHandler("removeprofanity", remove_profanity_handler))
-    application.add_handler(CommandHandler("toggleapproval", toggle_approval_handler))
-    application.add_handler(CommandHandler("setratelimit", set_rate_limit_handler))
-    application.add_handler(CommandHandler("setactivityhours", set_activity_hours_handler))
-    application.add_handler(CommandHandler("settings", list_settings_handler))
-    application.add_handler(CommandHandler("listadmins", list_admins_handler))
-    application.add_handler(CommandHandler("listprofanity", list_profanity_handler))
-    
-    # Callback query handlers
-    application.add_handler(CallbackQueryHandler(button_callback_handler, pattern="^approve_"))
-    application.add_handler(CallbackQueryHandler(button_callback_handler, pattern="^reject_"))
+    # Callback query handlers for admin approval
+    application.add_handler(CallbackQueryHandler(admin_callback_handler))
     
     # Message handlers
     application.add_handler(MessageHandler(
